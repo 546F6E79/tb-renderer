@@ -13,6 +13,9 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 TEXT_CHARS = "escF0123456789"
+# полный набор для бегущей строки трека: печатный ASCII + кириллица + тире/кавычки
+MARQUEE_CHARS = "".join(chr(c) for c in range(0x20, 0x7F)) + "АБВГДЕЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯабвгдежзийклмнопрстуфхцчшщъыьэюяЁё«»—…"
+MARQUEE_PX = 24
 TEXT_PX = 30
 # fa-иконки из Nerd-диапазона (unicode ⏸⏮⏭ = tofu в JetBrains Mono)
 SYM_CHARS = "\uf04a\uf04b\uf04c\uf04e\uf185\uf186\uf027\uf028\uf11c\uf068\uf067"  # backward play pause forward sun solid sun-o vol-down vol-up kbd minus plus
@@ -71,6 +74,10 @@ def main():
                 "advance": a.value, "rows": rows}
 
     glyphs = []
+    for ch in MARQUEE_CHARS:
+        g = render(ch, MARQUEE_PX)
+        if g:
+            glyphs.append((ch, "mq", g))
     for ch in TEXT_CHARS:
         g = render(ch, TEXT_PX)
         if g:
@@ -103,7 +110,12 @@ def main():
            "    pub alpha: &'static [u8],",
            "}",
            "",
-           "pub static TEXT: &[&Glyph] = &["]
+           ]
+    out.append("pub static MARQUEE: &[&Glyph] = &[")
+    out += [f"    &mq_{ord(ch):x}," for ch, k, _ in glyphs if k == "mq"]
+    out.append("];")
+    out.append("")
+    out.append("pub static TEXT: &[&Glyph] = &[")
     out += [f"    &glyph_text_{ord(ch)}," for ch, k, _ in glyphs if k == "text"]
     out.append("];")
     out.append("")
@@ -129,7 +141,7 @@ def main():
         out.append("] };")
 
     for ch, k, g in glyphs:
-        ident = {"text": f"glyph_text_{ord(ch)}", "sym": f"sym_{ord(ch):x}", "sym2": f"sym2_{ord(ch):x}"}[k]
+        ident = {"text": f"glyph_text_{ord(ch)}", "sym": f"sym_{ord(ch):x}", "sym2": f"sym2_{ord(ch):x}", "mq": f"mq_{ord(ch):x}"}[k]
         emit(ident, ch, g)
 
     dst = HERE.parent / "src" / "atlas.rs"

@@ -19,6 +19,7 @@ use conn::Conn;
 use draw::Canvas;
 use frame::Frame;
 use layout::{MediaState, Seg};
+use media::NowPlaying;
 
 const PROBE_SETS: [u64; 4] = [
     wire::FEATURE_MEMFD | wire::FEATURE_INPUT | wire::FEATURE_TAPKEYS | wire::FEATURE_DISPLAY_BRIGHTNESS | wire::FEATURE_KEYBOARD_BACKLIGHT,
@@ -45,6 +46,8 @@ struct TouchState {
 
 struct App {
     pressed_seg: Option<Seg>,
+    track: String,
+    marquee_ms: u64,
     width: u32,
     height: u32,
     frame: Option<Frame>,
@@ -64,6 +67,8 @@ impl App {
     fn new() -> App {
         App {
             pressed_seg: None,
+            track: String::new(),
+            marquee_ms: 0,
             width: 0,
             height: 0,
             frame: None,
@@ -99,6 +104,7 @@ impl App {
 
     fn do_action(&mut self, conn: &Conn, seg: Seg) {
         match seg {
+            Seg::Track => {}
             Seg::Esc => self.send_tap(conn, wire::KEY_ESC),
             Seg::F(n) => {
                 if let Some(k) = Some(wire::key_f(n)).filter(|k| *k != 0) {
@@ -260,7 +266,10 @@ impl App {
     }
 
     fn render(&mut self) {
-        // (иконки регулировок используют общий бейдж −/+)
+        // данные для бегущей строки — до заимствования фрейма
+        let track_txt = self.track.clone();
+        let mq_ms = self.marquee_ms;
+        let mq_w = text_width_mq(&track_txt);
         let Some(f) = self.frame.as_mut() else { return };
         let mut cv = Canvas { w: self.width, h: self.height, stride: f.stride, buf: f.pixels() };
         cv.fill(draw::BG);
@@ -280,6 +289,22 @@ impl App {
                 _ => draw::FG,
             };
             match seg {
+                Seg::Track => {
+                    if track_txt.is_empty() {
+                        continue;
+                    }
+                    let zw = *x1 - *x0 - 8;
+                    let baseline = 33i32;
+                    if mq_w <= zw {
+                        let pen = x0 + 4 + (zw - mq_w) / 2;
+                        draw_mq_text(&mut cv, &track_txt, pen, baseline, icon);
+                    } else {
+                        let total = mq_w + zw;
+                        let offset = (mq_ms / 15) % total as u64; // ~66 px/с
+                        let pen = *x1 as i64 - 4 - offset as i64;
+                        draw_mq_clipped(&mut cv, &track_txt, pen, baseline, icon, *x0 + 4, *x1 - 4);
+                    }
+                }
                 Seg::Esc => {
                     draw_str(&mut cv, "esc", mid, icon);
                 }
@@ -331,6 +356,19 @@ impl App {
         }
     }
 
+    fn marquee_active(&self) -> bool {
+        !self.track.is_empty() && text_width_mq(&self.track) > self.track_zone_width()
+    }
+
+    fn track_zone_width(&self) -> u32 {
+        layout::build(self.width, self.fn_held)
+            .segs
+            .iter()
+            .find(|(s, _, _)| *s == Seg::Track)
+            .map(|(_, a, b)| b - a - 8)
+            .unwrap_or(0)
+    }
+
     fn maybe_submit(&mut self, conn: &Conn) {
         if !self.dirty || self.in_flight || self.frame.is_none() {
             return;
@@ -344,6 +382,40 @@ impl App {
             if conn.send(&wire::submit_frame(bid, fid, r)).is_ok() {
                 self.in_flight = true;
             }
+        }
+    }
+}
+
+fn text_width_mq(s: &str) -> u32 {
+    s.chars()
+        .filter_map(|c| atlas::MARQUEE.iter().find(|g| g.ch == c))
+        .map(|g| g.advance)
+        .sum()
+}
+
+fn draw_mq_text(cv: &mut Canvas, s: &str, pen: u32, baseline: i32, c: [u8; 4]) {
+    let mut x = pen;
+    for ch in s.chars() {
+        if let Some(g) = atlas::MARQUEE.iter().find(|g| g.ch == ch) {
+            cv.glyph_alpha(g.alpha, g.w, g.h, g.left, g.top, x, baseline, c);
+            x += g.advance;
+        }
+    }
+}
+
+fn draw_mq_clipped(cv: &mut Canvas, s: &str, pen: i64, baseline: i32, c: [u8; 4], clip_x0: u32, clip_x1: u32) {
+    let mut x = pen;
+    for ch in s.chars() {
+        if let Some(g) = atlas::MARQUEE.iter().find(|g| g.ch == ch) {
+            let gx0 = x + g.left as i64;
+            let gx1 = gx0 + g.w as i64;
+            if gx1 >= clip_x0 as i64 && gx0 < clip_x1 as i64 {
+                cv.glyph_alpha(g.alpha, g.w, g.h, g.left, g.top, x.max(0) as u32, baseline, c);
+            }
+            x += g.advance as i64;
+        }
+        if x > clip_x1 as i64 {
+            break;
         }
     }
 }
@@ -431,7 +503,7 @@ fn expect_ack(conn: &Conn, req_id: u32) -> bool {
     false
 }
 
-fn run_session(conn: &Conn, rx: &Receiver<MediaState>) {
+fn run_session(conn: &Conn, rx: &Receiver<NowPlaying>) {
     let mut app = App::new();
     let mut req = 0u32;
     match handshake(conn, &mut req) {
@@ -472,8 +544,9 @@ fn run_session(conn: &Conn, rx: &Receiver<MediaState>) {
         loop {
             match rx.try_recv() {
                 Ok(m) => {
-                    if app.media != m {
-                        app.media = m;
+                    if app.media != m.state || app.track != m.track {
+                        app.media = m.state;
+                        app.track = m.track;
                         app.dirty = true;
                     }
                 }
@@ -482,6 +555,11 @@ fn run_session(conn: &Conn, rx: &Receiver<MediaState>) {
             }
         }
         app.tick_repeats(conn);
+        // скролл бегущей строки: если текст длиннее зоны — перерисовка каждый тик
+        if app.marquee_active() {
+            app.marquee_ms = app.marquee_ms.wrapping_add(20);
+            app.dirty = true;
+        }
         if conn::wait_readable(conn.fd, 20) {
             match conn.recv(&mut buf) {
                 Ok(Some(n)) => {
@@ -519,7 +597,7 @@ fn run_session(conn: &Conn, rx: &Receiver<MediaState>) {
 
 fn main() {
     log("starting (renderer-selection v1)");
-    let (tx, rx) = std::sync::mpsc::channel();
+    let (tx, rx) = std::sync::mpsc::channel::<NowPlaying>();
     media::spawn(tx);
     let mut backoff = 50u64;
     loop {
