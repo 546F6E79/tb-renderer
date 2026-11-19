@@ -1,0 +1,13 @@
+[package]
+name = "tb-renderer"
+version = "0.1.0"
+edition = "2024"
+description = "Custom T1Bridge Touch Bar renderer: Esc/brightness/F-row + live MPRIS media + volume (KDE-friendly, compositor-agnostic)"
+license = "MIT"
+
+[dependencies]
+libc = "0.2"
+
+[profile.release]
+lto = true
+strip = true
