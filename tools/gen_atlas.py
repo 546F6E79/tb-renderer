@@ -18,8 +18,8 @@ MARQUEE_CHARS = "".join(chr(c) for c in range(0x20, 0x7F)) + "АБВГДЕЖЗИ
 MARQUEE_PX = 24
 TEXT_PX = 30
 # fa-иконки из Nerd-диапазона (unicode ⏸⏮⏭ = tofu в JetBrains Mono)
-SYM_CHARS = "\uf04a\uf04b\uf04c\uf04e\uf185\uf186\uf027\uf028\uf11c\uf068\uf067"  # backward play pause forward sun solid sun-o vol-down vol-up kbd minus plus
-SYM2_CHARS = "\uf186\uf185"  # мелкие солнца (контур/залитое) для подсветки клавиатуры
+SYM_CHARS = "\uf04a\uf04b\uf04c\uf04e\uf185\uf186\uf027\uf028\uf11c\uf068\uf067"  # backward play pause forward sun-o moon-o vol-down vol-up kbd minus plus
+SYM2_CHARS = "\uf186\uf185"  # запасной мелкий набор; основной ряд использует SYM и векторные иконки
 SYM2_PX = 20
 SYM_PX = 36
 

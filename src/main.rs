@@ -22,9 +22,19 @@ use layout::{MediaState, Seg};
 use media::NowPlaying;
 
 const PROBE_SETS: [u64; 4] = [
-    wire::FEATURE_MEMFD | wire::FEATURE_INPUT | wire::FEATURE_TAPKEYS | wire::FEATURE_DISPLAY_BRIGHTNESS | wire::FEATURE_KEYBOARD_BACKLIGHT,
-    wire::FEATURE_MEMFD | wire::FEATURE_INPUT | wire::FEATURE_TAPKEYS | wire::FEATURE_DISPLAY_BRIGHTNESS,
-    wire::FEATURE_MEMFD | wire::FEATURE_INPUT | wire::FEATURE_TAPKEYS | wire::FEATURE_KEYBOARD_BACKLIGHT,
+    wire::FEATURE_MEMFD
+        | wire::FEATURE_INPUT
+        | wire::FEATURE_TAPKEYS
+        | wire::FEATURE_DISPLAY_BRIGHTNESS
+        | wire::FEATURE_KEYBOARD_BACKLIGHT,
+    wire::FEATURE_MEMFD
+        | wire::FEATURE_INPUT
+        | wire::FEATURE_TAPKEYS
+        | wire::FEATURE_DISPLAY_BRIGHTNESS,
+    wire::FEATURE_MEMFD
+        | wire::FEATURE_INPUT
+        | wire::FEATURE_TAPKEYS
+        | wire::FEATURE_KEYBOARD_BACKLIGHT,
     wire::FEATURE_MEMFD | wire::FEATURE_INPUT | wire::FEATURE_TAPKEYS,
 ];
 
@@ -156,7 +166,11 @@ impl App {
         if inp.fn_pressed != self.fn_held {
             self.fn_held = inp.fn_pressed;
             self.dirty = true;
-            log(if self.fn_held { "Fn held -> F-row" } else { "Fn released -> main row" });
+            log(if self.fn_held {
+                "Fn held -> F-row"
+            } else {
+                "Fn released -> main row"
+            });
         }
 
         let mut fire: Vec<Seg> = Vec::new();
@@ -199,8 +213,7 @@ impl App {
         let vanished: Vec<u8> = self
             .touches
             .iter()
-            .filter(|(id, st)| st.tip && !seen.contains(id)
-                )
+            .filter(|(id, st)| st.tip && !seen.contains(id))
             .map(|(id, _)| *id)
             .collect();
         for id in vanished {
@@ -223,7 +236,8 @@ impl App {
             self.repeats.remove(&id);
         }
         for (id, seg) in repeat_start {
-            self.repeats.insert(id, (seg, Instant::now() + REPEAT_DELAY));
+            self.repeats
+                .insert(id, (seg, Instant::now() + REPEAT_DELAY));
         }
 
         // отдача: сегмент под первым касанием (tip=1)
@@ -271,7 +285,12 @@ impl App {
         let mq_ms = self.marquee_ms;
         let mq_w = text_width_mq(&track_txt);
         let Some(f) = self.frame.as_mut() else { return };
-        let mut cv = Canvas { w: self.width, h: self.height, stride: f.stride, buf: f.pixels() };
+        let mut cv = Canvas {
+            w: self.width,
+            h: self.height,
+            stride: f.stride,
+            buf: f.pixels(),
+        };
         cv.fill(draw::BG);
         let row = layout::build(self.width, self.fn_held);
         let playing = self.media == MediaState::Playing;
@@ -279,13 +298,13 @@ impl App {
         for (seg, x0, x1) in &row.segs {
             let hover = self.hover_seg == Some(*seg);
             let pressed = self.pressed_seg == Some(*seg);
-            cv.seg_bg(*x0, *x1, hover, pressed);
-            let cy0 = 12u32;
-            let cy1 = self.height - 12;
+            if *seg != Seg::Track {
+                cv.seg_bg(*x0, *x1, hover, pressed);
+            }
             let mid = (x0 + x1) / 2;
-            let w = x1 - x0;
             let icon: [u8; 4] = match seg {
                 Seg::Prev | Seg::PlayPause | Seg::Next if !has_player => draw::FG_DIM,
+                Seg::Track => draw::FG_TRACK,
                 _ => draw::FG,
             };
             match seg {
@@ -294,7 +313,7 @@ impl App {
                         continue;
                     }
                     let zw = *x1 - *x0 - 8;
-                    let baseline = 33i32;
+                    let baseline = 38i32;
                     if mq_w <= zw {
                         let pen = x0 + 4 + (zw - mq_w) / 2;
                         draw_mq_text(&mut cv, &track_txt, pen, baseline, icon);
@@ -309,43 +328,28 @@ impl App {
                     draw_str(&mut cv, "esc", mid, icon);
                 }
                 Seg::BrightDown | Seg::BrightUp => {
-                    // пара как в macOS: контурное солнце = вниз, залитое = вверх
-                    let ch = if *seg == Seg::BrightUp { '\u{f185}' } else { '\u{f186}' };
+                    let ch = if *seg == Seg::BrightUp {
+                        '\u{f185}'
+                    } else {
+                        '\u{f186}'
+                    };
                     if let Some(g) = atlas::SYM.iter().find(|g| g.ch == ch) {
                         draw_sym(&mut cv, mid, g, icon);
                     }
                 }
                 Seg::KbdDown | Seg::KbdUp => {
-                    // язык метафор как у яркости: контурное солнце = тусклее, залитое = ярче
-                    let sun = if *seg == Seg::KbdUp { '\u{f185}' } else { '\u{f186}' };
-                    if let Some(g) = atlas::SYM.iter().find(|g| g.ch == '\u{f11c}') {
-                        draw_sym(&mut cv, mid - 14, g, icon);
-                    }
-                    if let Some(g) = atlas::SYM2.iter().find(|g| g.ch == sun) {
-                        draw_sym(&mut cv, mid + 15, g, icon);
-                    }
+                    cv.keyboard_backlight(mid, self.height / 2, *seg == Seg::KbdUp, icon);
                 }
                 Seg::VolDown | Seg::VolUp => {
-                    let ch = if *seg == Seg::VolUp { '\u{f028}' } else { '\u{f027}' };
-                    if let Some(g) = atlas::SYM.iter().find(|g| g.ch == ch) {
-                        draw_sym(&mut cv, mid, g, icon);
-                    }
+                    cv.volume(mid, self.height / 2, *seg == Seg::VolUp, icon);
                 }
-                Seg::Prev => {
-                    if let Some(g) = atlas::SYM.iter().find(|g| g.ch == '\u{f04a}') {
-                        draw_sym(&mut cv, mid, g, icon);
-                    }
-                }
-                Seg::Next => {
-                    if let Some(g) = atlas::SYM.iter().find(|g| g.ch == '\u{f04e}') {
-                        draw_sym(&mut cv, mid, g, icon);
-                    }
-                }
+                Seg::Prev => cv.media_backward(mid, self.height / 2, icon),
+                Seg::Next => cv.media_forward(mid, self.height / 2, icon),
                 Seg::PlayPause => {
-                    let ch = if playing { '\u{f04c}' } else { '\u{f04b}' };
-                    let color = if playing && has_player { draw::ACCENT } else { icon };
-                    if let Some(g) = atlas::SYM.iter().find(|g| g.ch == ch) {
-                        draw_sym(&mut cv, mid, g, color);
+                    if playing {
+                        cv.media_pause(mid, self.height / 2, icon);
+                    } else {
+                        cv.media_play(mid, self.height / 2, icon);
                     }
                 }
                 Seg::F(n) => {
@@ -403,14 +407,31 @@ fn draw_mq_text(cv: &mut Canvas, s: &str, pen: u32, baseline: i32, c: [u8; 4]) {
     }
 }
 
-fn draw_mq_clipped(cv: &mut Canvas, s: &str, pen: i64, baseline: i32, c: [u8; 4], clip_x0: u32, clip_x1: u32) {
+fn draw_mq_clipped(
+    cv: &mut Canvas,
+    s: &str,
+    pen: i64,
+    baseline: i32,
+    c: [u8; 4],
+    clip_x0: u32,
+    clip_x1: u32,
+) {
     let mut x = pen;
     for ch in s.chars() {
         if let Some(g) = atlas::MARQUEE.iter().find(|g| g.ch == ch) {
             let gx0 = x + g.left as i64;
             let gx1 = gx0 + g.w as i64;
             if gx1 >= clip_x0 as i64 && gx0 < clip_x1 as i64 {
-                cv.glyph_alpha(g.alpha, g.w, g.h, g.left, g.top, x.max(0) as u32, baseline, c);
+                cv.glyph_alpha(
+                    g.alpha,
+                    g.w,
+                    g.h,
+                    g.left,
+                    g.top,
+                    x.max(0) as u32,
+                    baseline,
+                    c,
+                );
             }
             x += g.advance as i64;
         }
@@ -423,13 +444,25 @@ fn draw_mq_clipped(cv: &mut Canvas, s: &str, pen: i64, baseline: i32, c: [u8; 4]
 /// Символ из SYM-атласа, центрированный в сегменте (по advance и вертикали).
 fn draw_sym(cv: &mut Canvas, mid: u32, g: &atlas::Glyph, c: [u8; 4]) {
     let baseline = (cv.h as i32 / 2 + g.top as i32 - g.h as i32 / 2) as i32;
-    cv.glyph_alpha(g.alpha, g.w, g.h, g.left, g.top, mid.saturating_sub(g.advance / 2), baseline, c);
+    cv.glyph_alpha(
+        g.alpha,
+        g.w,
+        g.h,
+        g.left,
+        g.top,
+        mid.saturating_sub(g.advance / 2),
+        baseline,
+        c,
+    );
 }
 
 /// Строка из TEXT-атласа, центрированная по сумме advance.
 fn draw_str(cv: &mut Canvas, s: &str, mid: u32, c: [u8; 4]) {
     let glyph = |ch: char| atlas::TEXT.iter().find(|g| g.ch.eq_ignore_ascii_case(&ch));
-    let total: u32 = s.chars().filter_map(|ch| glyph(ch).map(|g| g.advance)).sum();
+    let total: u32 = s
+        .chars()
+        .filter_map(|ch| glyph(ch).map(|g| g.advance))
+        .sum();
     let mut pen = mid.saturating_sub(total / 2);
     let baseline = 41i32; // согласовано с 30px кеглем
     for ch in s.chars() {
